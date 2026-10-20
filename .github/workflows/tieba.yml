@@ -19,7 +19,7 @@ concurrency:
 jobs:
   TiebaSignIn:
     runs-on: ubuntu-latest
-    timeout-minutes: 20   # 防止卡死占满 6 小时
+    timeout-minutes: 10   # 防止卡死占满 6 小时
 
     steps:
       - name: Checkout
