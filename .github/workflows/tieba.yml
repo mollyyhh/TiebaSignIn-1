@@ -2,60 +2,55 @@ name: Start
 
 on:
   push:
-    branches: [main]      # 只在主分支推送时触发，避免所有分支都跑
+    branches: [main]
   gollum:
   schedule:
-    # 官方 timezone 字段：cron 直接按北京时间写，无需手动减 8 小时
-    # 03:17 用非整点，错开全球整点高峰，降低被 GitHub 调度器延迟的概率
+    # 北京时间每天 06:17，避开整点拥堵降低延迟概率
     - cron: '17 6 * * *'
       timezone: 'Asia/Shanghai'
-  workflow_dispatch:      # 支持手动立即执行
+  workflow_dispatch:
 
 permissions:
-  contents: write         # 改成 write：保活步骤要往默认分支提交，read 权限不够
+  contents: write         # 保活步骤需要 push，read 不够
 
 concurrency:
   group: tieba-sign-in
-  cancel-in-progress: false   # 不取消正在跑的，排队执行，避免重复签到
+  cancel-in-progress: false
 
 jobs:
   TiebaSignIn:
     runs-on: ubuntu-latest
-    timeout-minutes: 10   # 仅作最后兜底；正常运行靠 step 内 timeout 限时，不会触发这里
+    timeout-minutes: 10
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v5      # 升级到 v5，消除 Node 20 弃用提示
-        with:
-          fetch-depth: 0               # 保活步骤需要完整历史以便回推
+        uses: actions/checkout@v5
 
       - name: Set up JDK 8
-        uses: actions/setup-java@v5    # 升级到 v5，消除 setup-java v4 弃用提示
+        uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: '8'
-          cache: maven     # setup-java 内置 Maven 缓存，替代 actions/cache
+          cache: maven
 
       - name: Run sign-in
-        continue-on-error: true        # 命令非零退出（含 timeout 124）也算步骤成功
+        continue-on-error: true
         env:
           BDUSS: ${{ secrets.BDUSS }}
           SCKEY: ${{ secrets.SCKEY }}
         run: |
-          # timeout 540 = 9 分钟，给 checkout/JDK 留出余量，保证不撞 job 级 10 分钟硬超时
           timeout 540 mvn -B compile exec:java \
             -Dexec.mainClass="top.srcrs.Run" \
             -Dexec.args="${BDUSS} ${SCKEY}" || true
 
-      # 真正的防禁用保活：schedule 的 60 天禁用按仓库有无活动判定，
-      # 与 job 是否成功无关。每天对 README 做一次空提交，制造真实活动。
       - name: Keep schedule alive
+        continue-on-error: true
         run: |
           git config user.name  "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git checkout main
-          echo "" >> README.md
-          git add README.md
-          git commit -m "chore: keep scheduled workflow alive" || exit 0
-          git pull --rebase origin main
-          git push origin main
+
+          # 不切分支，直接在当前 HEAD 上造空提交
+          git commit --allow-empty -m "chore: keep schedule alive $(date -u +%F)"
+
+          # 用 HEAD 而非写死 main，避免 pathspec 报错
+          git push origin HEAD
